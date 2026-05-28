@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.log
+
+# Maliv-Ground local data (DO NOT commit secrets or user data)
+backend/storage/.secret
+backend/storage/users.json
+backend/storage/features/*.json
+!backend/storage/features/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Env files
+.env
+.env.local
+.env.*.local

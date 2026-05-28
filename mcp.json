@@ -1,0 +1,53 @@
+{
+  "name": "maliv-ground",
+  "version": "0.1.0",
+  "description": "Shared context store for dev teams — ground truth layer for AI-assisted development",
+  "tools": [
+    {
+      "name": "list_features",
+      "description": "Returns all features with title, id, and status"
+    },
+    {
+      "name": "get_feature_context",
+      "description": "Returns full spec + all answered Q&A for a feature",
+      "parameters": {
+        "feature_id": "string"
+      }
+    },
+    {
+      "name": "ask_question",
+      "description": "Post a doubt/question for a feature — stored as pending",
+      "parameters": {
+        "feature_id": "string",
+        "question": "string",
+        "asked_by": "string"
+      }
+    },
+    {
+      "name": "answer_question",
+      "description": "Answer a pending question for a feature",
+      "parameters": {
+        "feature_id": "string",
+        "question_id": "string",
+        "answer": "string",
+        "answered_by": "string"
+      }
+    },
+    {
+      "name": "get_pending_questions",
+      "description": "Returns unanswered questions for a feature",
+      "parameters": {
+        "feature_id": "string"
+      }
+    },
+    {
+      "name": "flag_conflict",
+      "description": "Flag a contradiction/conflict for a feature",
+      "parameters": {
+        "feature_id": "string",
+        "description": "string",
+        "flagged_by": "string"
+      }
+    }
+  ]
+}
