@@ -19,6 +19,8 @@ backend/storage/.secret
 backend/storage/users.json
 backend/storage/features/*.json
 !backend/storage/features/.gitkeep
+backend/storage/projects/*.json
+backend/storage/spec_files/**/*
 
 # OS / editor
 .DS_Store

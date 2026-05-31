@@ -64,13 +64,32 @@ app = Server("maliv-ground")
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
-            name="list_features",
-            description="Returns all features with title, id, and status",
+            name="list_projects",
+            description="Returns all projects with id, title, status, and feature_count. Projects group related features.",
             inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
+            name="get_project_context",
+            description="Returns a project's metadata and the list of features it contains.",
+            inputSchema={
+                "type": "object",
+                "properties": {"project_id": {"type": "string"}},
+                "required": ["project_id"],
+            },
+        ),
+        types.Tool(
+            name="list_features",
+            description="Returns features. Optionally filter by project_id to get only features in one project.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "Optional project slug to filter by"}
+                },
+            },
+        ),
+        types.Tool(
             name="get_feature_context",
-            description="Returns spec + answered Q&A for a feature. Pass mode='summary' for a token-efficient compressed view (requires Master LLM enabled).",
+            description="Returns spec + answered Q&A + attached spec file metadata. Pass mode='summary' for token-efficient compressed view (requires Master LLM enabled).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -78,6 +97,27 @@ async def list_tools() -> list[types.Tool]:
                     "mode": {"type": "string", "enum": ["full", "summary"], "description": "Optional. Defaults to config.json context_pull_mode."},
                 },
                 "required": ["feature_id"],
+            },
+        ),
+        types.Tool(
+            name="list_spec_files",
+            description="List the markdown spec files attached to a feature (metadata only).",
+            inputSchema={
+                "type": "object",
+                "properties": {"feature_id": {"type": "string"}},
+                "required": ["feature_id"],
+            },
+        ),
+        types.Tool(
+            name="get_spec_file",
+            description="Fetch the full text content of a markdown spec file attached to a feature.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "feature_id": {"type": "string"},
+                    "filename": {"type": "string", "description": "e.g. 'api-design.md'"},
+                },
+                "required": ["feature_id", "filename"],
             },
         ),
         types.Tool(
@@ -156,9 +196,56 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "whoami":
         return text(user)
 
+    if name == "list_projects":
+        projects = storage.list_projects()
+        out = []
+        for p in projects:
+            count = len(storage.list_features(project_id=p.id))
+            out.append({"id": p.id, "title": p.title, "status": p.status, "feature_count": count})
+        return text(out)
+
+    if name == "get_project_context":
+        pid = arguments["project_id"]
+        p = storage.load_project(pid)
+        if not p:
+            return text({"error": f"Project '{pid}' not found"})
+        features = storage.list_features(project_id=pid)
+        return text({
+            "project_id": p.id,
+            "title": p.title,
+            "description": p.description,
+            "status": p.status,
+            "tags": p.tags,
+            "features": [
+                {"id": f.id, "title": f.title, "status": f.status}
+                for f in features
+            ],
+        })
+
     if name == "list_features":
-        features = storage.list_features()
-        return text([{"id": f.id, "title": f.title, "status": f.status} for f in features])
+        pid_filter = arguments.get("project_id")
+        features = storage.list_features(project_id=pid_filter)
+        return text([
+            {"id": f.id, "title": f.title, "status": f.status, "project_id": f.project_id}
+            for f in features
+        ])
+
+    if name == "list_spec_files":
+        fid = arguments["feature_id"]
+        f = storage.load_feature(fid)
+        if not f:
+            return text({"error": f"Feature '{fid}' not found"})
+        return text([sf.model_dump(mode="json") for sf in f.spec_files])
+
+    if name == "get_spec_file":
+        fid = arguments["feature_id"]
+        f = storage.load_feature(fid)
+        if not f:
+            return text({"error": f"Feature '{fid}' not found"})
+        content = storage.load_spec_file(fid, arguments["filename"])
+        if content is None:
+            return text({"error": f"Spec file '{arguments['filename']}' not found"})
+        return [types.TextContent(type="text", text=content)]
 
     if name == "get_feature_context":
         fid = arguments["feature_id"]
@@ -173,21 +260,25 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return text({
                 "feature_id": f.id,
                 "title": f.title,
+                "project_id": f.project_id,
                 "mode": "summary",
                 "summary": f.knowledge_graph_summary,
                 "summary_generated_at": str(f.summary_generated_at) if f.summary_generated_at else None,
                 "open_conflicts": [c.model_dump(mode="json") for c in f.conflicts if not c.resolved],
+                "spec_files": [sf.model_dump(mode="json") for sf in f.spec_files],
             })
 
         answered = [q.model_dump(mode="json") for q in f.qa if q.status == "answered"]
         return text({
             "feature_id": f.id,
             "title": f.title,
+            "project_id": f.project_id,
             "mode": "full",
             "spec": f.spec.current,
             "viability_warnings": f.spec.viability_warnings,
             "answered_qa": answered,
             "open_conflicts": [c.model_dump(mode="json") for c in f.conflicts if not c.resolved],
+            "spec_files": [sf.model_dump(mode="json") for sf in f.spec_files],
         })
 
     if name == "ask_question":

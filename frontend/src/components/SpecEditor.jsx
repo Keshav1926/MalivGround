@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { apiJson, api } from "../api";
+import SpecFilesList from "./SpecFilesList";
+import MarkdownReader from "./MarkdownReader";
 
 const WRITE_ROLES = ["admin", "pa", "lead"];
 
@@ -8,8 +10,20 @@ export default function SpecEditor({ feature, onUpdated, currentUser }) {
   const [content, setContent] = useState(feature.spec.current);
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [readingFile, setReadingFile] = useState(null);  // filename string when active
 
   const canEdit = currentUser && WRITE_ROLES.includes(currentUser.role);
+
+  // When reading a markdown file, swap the whole spec view
+  if (readingFile) {
+    return (
+      <MarkdownReader
+        featureId={feature.id}
+        filename={readingFile}
+        onBack={() => setReadingFile(null)}
+      />
+    );
+  }
 
   async function handleSave() {
     setLoading(true);
@@ -119,6 +133,13 @@ export default function SpecEditor({ feature, onUpdated, currentUser }) {
           ))}
         </div>
       )}
+
+      <SpecFilesList
+        feature={feature}
+        onUpdated={onUpdated}
+        onOpenFile={(filename) => setReadingFile(filename)}
+        currentUser={currentUser}
+      />
     </div>
   );
 }

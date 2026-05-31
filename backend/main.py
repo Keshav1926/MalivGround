@@ -1,20 +1,22 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from datetime import datetime, timezone
 import re
 
 from .models import (
-    Feature, Spec, SpecVersion, QnA, Conflict, User,
+    Feature, Spec, SpecVersion, QnA, Conflict, User, Project, SpecFile,
     CreateFeatureRequest, UpdateSpecRequest,
     AskQuestionRequest, AnswerQuestionRequest, FlagConflictRequest,
     ResolveConflictRequest, LoginRequest, RegisterRequest,
     CreateApiKeyRequest, ChangePasswordRequest,
+    CreateProjectRequest, UpdateProjectRequest,
 )
 from . import storage
 from .master_llm import get_master_llm, load_config
 from . import auth
 
-app = FastAPI(title="Maliv-Ground", version="0.2.0")
+app = FastAPI(title="Maliv-Ground", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +24,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+LEGACY_PROJECT_ID = "legacy"
+
+
+def _ensure_legacy_project():
+    """Create the Legacy project if any features lack project_id, then assign them."""
+    orphans = [f for f in storage.list_features() if not f.project_id]
+    if not orphans:
+        return
+    legacy = storage.load_project(LEGACY_PROJECT_ID)
+    if not legacy:
+        legacy = Project(
+            id=LEGACY_PROJECT_ID,
+            title="Legacy",
+            description="Features created before Projects were introduced.",
+            created_by="system",
+            created_at=datetime.now(timezone.utc),
+        )
+        storage.save_project(legacy)
+    for f in orphans:
+        f.project_id = LEGACY_PROJECT_ID
+        storage.save_feature(f)
+    print(f"📦 Migrated {len(orphans)} feature(s) to Legacy project")
 
 
 @app.on_event("startup")
@@ -35,6 +61,7 @@ def on_startup():
         print(f"   password: {password}")
         print(f"   ⚠ Change this immediately via /auth/change-password")
         print("=" * 60)
+    _ensure_legacy_project()
 
 
 def slugify(text: str) -> str:
@@ -224,16 +251,18 @@ def _user_public(user: User) -> dict:
 # ============================================================
 
 @app.get("/features")
-def get_features(user: User = Depends(auth.get_current_user)):
-    features = storage.list_features()
+def get_features(project_id: str = "", user: User = Depends(auth.get_current_user)):
+    features = storage.list_features(project_id=project_id or None)
     return [
-        {"id": f.id, "title": f.title, "status": f.status, "created_at": f.created_at}
+        {"id": f.id, "title": f.title, "status": f.status, "created_at": f.created_at, "project_id": f.project_id}
         for f in features
     ]
 
 
 @app.post("/features", status_code=201)
 def create_feature(req: CreateFeatureRequest, bg: BackgroundTasks, user: User = Depends(require_write)):
+    if not storage.load_project(req.project_id):
+        raise HTTPException(400, f"Project '{req.project_id}' not found")
     feature_id = slugify(req.title)
     if storage.load_feature(feature_id):
         raise HTTPException(400, f"Feature '{feature_id}' already exists")
@@ -241,6 +270,7 @@ def create_feature(req: CreateFeatureRequest, bg: BackgroundTasks, user: User = 
     feature = Feature(
         id=feature_id,
         title=req.title,
+        project_id=req.project_id,
         created_by=user.username,
         created_at=ts,
         spec=Spec(
@@ -394,9 +424,156 @@ def get_context(feature_id: str, mode: str = "", user: User = Depends(auth.get_c
     return {
         "feature_id": f.id,
         "title": f.title,
+        "project_id": f.project_id,
         "mode": "full",
         "spec": f.spec.current,
         "viability_warnings": f.spec.viability_warnings,
         "answered_qa": answered_qa,
         "open_conflicts": [c for c in f.conflicts if not c.resolved],
+        "spec_files": [sf.model_dump(mode="json") for sf in f.spec_files],
     }
+
+
+# ============================================================
+# PROJECT ROUTES
+# ============================================================
+
+@app.get("/projects")
+def list_projects(user: User = Depends(auth.get_current_user)):
+    projects = storage.list_projects()
+    # Attach feature counts
+    out = []
+    for p in projects:
+        count = len(storage.list_features(project_id=p.id))
+        out.append({**p.model_dump(mode="json"), "feature_count": count})
+    return out
+
+
+@app.post("/projects", status_code=201)
+def create_project(req: CreateProjectRequest, user: User = Depends(require_write)):
+    pid = slugify(req.title)
+    if not pid:
+        raise HTTPException(400, "Title cannot be empty")
+    if storage.load_project(pid):
+        raise HTTPException(400, f"Project '{pid}' already exists")
+    project = Project(
+        id=pid,
+        title=req.title,
+        description=req.description,
+        created_by=user.username,
+        created_at=now(),
+        tags=req.tags,
+    )
+    storage.save_project(project)
+    return project
+
+
+@app.get("/projects/{project_id}")
+def get_project(project_id: str, user: User = Depends(auth.get_current_user)):
+    p = storage.load_project(project_id)
+    if not p:
+        raise HTTPException(404, "Project not found")
+    features = storage.list_features(project_id=project_id)
+    return {
+        **p.model_dump(mode="json"),
+        "features": [
+            {"id": f.id, "title": f.title, "status": f.status, "created_at": f.created_at}
+            for f in features
+        ],
+    }
+
+
+@app.put("/projects/{project_id}")
+def update_project(project_id: str, req: UpdateProjectRequest, user: User = Depends(require_write)):
+    p = storage.load_project(project_id)
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if req.title is not None: p.title = req.title
+    if req.description is not None: p.description = req.description
+    if req.status is not None: p.status = req.status
+    if req.tags is not None: p.tags = req.tags
+    storage.save_project(p)
+    return p
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: str, admin: User = Depends(auth.require_roles("admin"))):
+    p = storage.load_project(project_id)
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if storage.list_features(project_id=project_id):
+        raise HTTPException(400, "Project still contains features; move or delete them first")
+    storage.delete_project(project_id)
+    return {"status": "ok"}
+
+
+@app.get("/projects/{project_id}/features")
+def list_project_features(project_id: str, user: User = Depends(auth.get_current_user)):
+    if not storage.load_project(project_id):
+        raise HTTPException(404, "Project not found")
+    features = storage.list_features(project_id=project_id)
+    return [
+        {"id": f.id, "title": f.title, "status": f.status, "created_at": f.created_at}
+        for f in features
+    ]
+
+
+# ============================================================
+# SPEC FILE ROUTES (markdown uploads)
+# ============================================================
+
+@app.post("/features/{feature_id}/spec-files", status_code=201)
+async def upload_spec_file(feature_id: str, file: UploadFile = File(...), user: User = Depends(require_write)):
+    f = storage.load_feature(feature_id)
+    if not f:
+        raise HTTPException(404, "Feature not found")
+
+    raw = await file.read()
+    if len(raw) > storage.MAX_SPEC_FILE_BYTES:
+        raise HTTPException(413, f"File exceeds {storage.MAX_SPEC_FILE_BYTES} bytes")
+
+    try:
+        record = storage.save_spec_file(feature_id, file.filename, raw, user.username)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Update feature's spec_files list (replace if same filename)
+    f.spec_files = [sf for sf in f.spec_files if sf.filename != record.filename]
+    f.spec_files.append(record)
+    storage.save_feature(f)
+    return record
+
+
+@app.get("/features/{feature_id}/spec-files")
+def list_spec_files(feature_id: str, user: User = Depends(auth.get_current_user)):
+    f = storage.load_feature(feature_id)
+    if not f:
+        raise HTTPException(404, "Feature not found")
+    return [sf.model_dump(mode="json") for sf in f.spec_files]
+
+
+@app.get("/features/{feature_id}/spec-files/{filename}", response_class=PlainTextResponse)
+def get_spec_file(feature_id: str, filename: str, user: User = Depends(auth.get_current_user)):
+    f = storage.load_feature(feature_id)
+    if not f:
+        raise HTTPException(404, "Feature not found")
+    content = storage.load_spec_file(feature_id, filename)
+    if content is None:
+        raise HTTPException(404, "Spec file not found")
+    return content
+
+
+@app.delete("/features/{feature_id}/spec-files/{filename}")
+def delete_spec_file(feature_id: str, filename: str, user: User = Depends(require_write)):
+    f = storage.load_feature(feature_id)
+    if not f:
+        raise HTTPException(404, "Feature not found")
+    try:
+        safe = storage.sanitize_filename(filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not storage.delete_spec_file(feature_id, safe):
+        raise HTTPException(404, "Spec file not found")
+    f.spec_files = [sf for sf in f.spec_files if sf.filename != safe]
+    storage.save_feature(f)
+    return {"status": "ok"}

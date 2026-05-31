@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/features": "http://localhost:8000",
+      "/projects": "http://localhost:8000",
       "/auth": "http://localhost:8000",
       "/system": "http://localhost:8000",
     },

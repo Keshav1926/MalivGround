@@ -4,6 +4,10 @@
 
 A self-hostable, MCP-native shared context store for dev teams. Prevents the "Chinese Whispers" problem in AI-assisted development — PA specs, team Q&A, and decisions flow directly into your AI coding agents.
 
+**v0.3 highlights:**
+- 📁 **Projects** — group features under projects; tree-view sidebar
+- 📝 **Markdown spec files** — PA/lead can upload `specs.md`, `api-design.md`, etc. to any feature; click to render inline. AI agents fetch them via MCP `get_spec_file` tool
+
 **v0.2 highlights:**
 - 🤖 **Master LLM layer** — auto-flags ambiguous specs and detects contradictions in Q&A
 - 📦 **Knowledge graph summary** — token-efficient context for AI agents
@@ -131,6 +135,10 @@ Admins create users via `POST /auth/register` or the API docs.
 | `flag_conflict(feature_id, description)` | Flag a contradiction | any |
 | `regenerate_summary(feature_id)` | Force-regenerate KG summary | pa/lead/admin |
 | `whoami` | Show authenticated user | any |
+| `list_projects` | List all projects with feature counts | any |
+| `get_project_context(project_id)` | Project metadata + feature list | any |
+| `list_spec_files(feature_id)` | List attached markdown files (metadata) | any |
+| `get_spec_file(feature_id, filename)` | Full markdown text of an attached file | any |
 
 ---
 
@@ -148,12 +156,26 @@ POST   /auth/api-keys                 # → full key (shown once)
 GET    /auth/api-keys                 # list (no full key)
 DELETE /auth/api-keys/{id}
 
+# Projects
+GET    /projects                      # list with feature counts
+POST   /projects                      # create (pa/lead/admin)
+GET    /projects/{id}                 # get + embedded feature list
+PUT    /projects/{id}                 # update (pa/lead/admin)
+DELETE /projects/{id}                 # admin-only, must be empty
+GET    /projects/{id}/features
+
 # Features
-GET    /features
-POST   /features
+GET    /features?project_id=<id>      # optional filter
+POST   /features                      # body requires project_id
 GET    /features/{id}
 PUT    /features/{id}/spec
 GET    /features/{id}/context?mode=full|summary
+
+# Spec files (markdown uploads)
+POST   /features/{id}/spec-files                 # multipart .md upload (1MB max)
+GET    /features/{id}/spec-files                 # list metadata
+GET    /features/{id}/spec-files/{filename}      # raw markdown text
+DELETE /features/{id}/spec-files/{filename}      # pa/lead/admin
 
 # Q&A
 POST   /features/{id}/qa
@@ -175,11 +197,13 @@ All `/features/*` endpoints require `Authorization: Bearer <jwt>` or `X-API-Key:
 
 ## Storage
 
+- Projects: `backend/storage/projects/{project-id}.json`
 - Features: `backend/storage/features/{feature-id}.json`
+- Spec files: `backend/storage/spec_files/{feature-id}/{filename}.md`
 - Users: `backend/storage/users.json`
 - JWT secret: `backend/storage/.secret` (auto-generated, keep private)
 
-All files human-readable. You can version `features/` in Git alongside your codebase.
+All files human-readable. You can version `projects/`, `features/`, and `spec_files/` in Git alongside your codebase.
 
 ---
 

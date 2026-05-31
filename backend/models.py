@@ -37,18 +37,37 @@ class Conflict(BaseModel):
     auto_detected: bool = False
 
 
+class SpecFile(BaseModel):
+    filename: str
+    uploaded_by: str
+    uploaded_at: datetime
+    size_bytes: int
+
+
 class Feature(BaseModel):
     id: str
     title: str
+    project_id: Optional[str] = None  # required for new; migrated on startup for old
     created_by: str
     created_at: datetime
     spec: Spec
     qa: list[QnA] = []
     conflicts: list[Conflict] = []
+    spec_files: list[SpecFile] = []
     knowledge_graph_summary: Optional[str] = None
     summary_generated_at: Optional[datetime] = None
     tags: list[str] = []
     status: str = "active"
+
+
+class Project(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    created_by: str
+    created_at: datetime
+    status: str = "active"
+    tags: list[str] = []
 
 
 # --- Auth models ---
@@ -75,8 +94,22 @@ class User(BaseModel):
 class CreateFeatureRequest(BaseModel):
     title: str
     spec_content: str
-    created_by: Optional[str] = None  # derived from auth in Phase 3
+    project_id: str
+    created_by: Optional[str] = None  # derived from auth
     tags: list[str] = []
+
+
+class CreateProjectRequest(BaseModel):
+    title: str
+    description: str = ""
+    tags: list[str] = []
+
+
+class UpdateProjectRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    tags: Optional[list[str]] = None
 
 
 class UpdateSpecRequest(BaseModel):

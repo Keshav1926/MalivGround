@@ -12,6 +12,7 @@ import { apiJson, getToken, setToken } from "./api";
 export default function App() {
   const [user, setUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const [projects, setProjects] = useState([]);
   const [features, setFeatures] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,11 +33,14 @@ export default function App() {
     return () => window.removeEventListener("maliv:logout", onLogout);
   }, []);
 
-  // Load features when authed
+  // Load projects + features when authed
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    apiJson("/features").then(setFeatures).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([
+      apiJson("/projects").then(setProjects).catch(() => {}),
+      apiJson("/features").then(setFeatures).catch(() => {}),
+    ]).finally(() => setLoading(false));
     fetch("/system/status").then(r => r.json()).then(setSystemStatus).catch(() => {});
   }, [user]);
 
@@ -46,10 +50,14 @@ export default function App() {
     setTab("spec");
   }
 
-  function handleCreated(feature) {
+  function handleFeatureCreated(feature) {
     setFeatures(prev => [feature, ...prev]);
     setSelected(feature);
     setTab("spec");
+  }
+
+  function handleProjectCreated(project) {
+    setProjects(prev => [{ ...project, feature_count: 0 }, ...prev]);
   }
 
   function handleUpdated(updated) {
@@ -62,6 +70,7 @@ export default function App() {
     setUser(null);
     setSelected(null);
     setFeatures([]);
+    setProjects([]);
   }
 
   if (authChecking) {
@@ -75,10 +84,12 @@ export default function App() {
   return (
     <div style={styles.layout}>
       <FeatureList
+        projects={projects}
         features={features}
         selected={selected}
         onSelect={handleSelect}
-        onCreated={handleCreated}
+        onFeatureCreated={handleFeatureCreated}
+        onProjectCreated={handleProjectCreated}
         currentUser={user}
       />
 
